@@ -57,6 +57,7 @@ class SET:
 
         # Charging energy
         self.Ec = e ** 2 / self.C_total
+
         # Chemical potential
         self.muR = -e * self.Vs  # right barrier (source)
         self.muL = -e * self.Vd  # left barrier (drain)
@@ -87,6 +88,7 @@ class SET:
         :param states_number: Number of states to consider (N=5 by default)
         :return: Free energy, as a list of numpy array from E0 to E5 (or E_N for N set by states_number)
         """
+
         if states_number < 1:
             raise ValueError('Number of states cannot be smaller than 1.')
 
@@ -133,24 +135,3 @@ class SET:
                     current_matrix[i, j] -= e * off
 
         return current_matrix
-
-    def energy_diff(self, N1: float, N2: float) -> Tuple:
-        """
-        Calculate the energy difference when the number of electrons fluctuates between N1±1 and N2±1
-        :param N1: Number of electron at junction 1
-        :param N2: Number of electron at junction 2
-        :return: Energy difference for each of the 4 cases (N1 + 1 | N1 - 1 | N2 + 1 | N2 - 1)
-        """
-        N = N1 - N2
-        V, Vg = np.meshgrid(self.V, self.Vg)
-
-        delta_free_energy_plus_N1 = e / self.C_total * (
-                    e / 2 + (N * e - self.Cg * Vg - self.Qext + self.C2 * V))
-        delta_free_energy_minus_N1 = e / self.C_total * (
-                    e / 2 - (N * e - self.Cg * Vg - self.Qext + self.C2 * V))
-        delta_free_energy_plus_N2 = e / self.C_total * (
-                    e / 2 + (-N * e + self.Cg * Vg + self.Qext + (self.C1 + self.Cg) * V))
-        delta_free_energy_minus_N2 = e / self.C_total * (
-                    e / 2 - (-N * e + self.Cg * Vg + self.Qext + (self.C1 + self.Cg) * V))
-
-        return delta_free_energy_plus_N1, delta_free_energy_minus_N1, delta_free_energy_plus_N2, delta_free_energy_minus_N2

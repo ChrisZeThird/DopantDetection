@@ -10,6 +10,7 @@ nbr_points_V = 200
 Q0 = 0  # background charge
 
 limit = 0.5e-3  # voltage range
+
 Vg = np.linspace(start=-0.03, stop=0.1, num=nbr_points_Vg)  # external potential
 V = np.linspace(start=-0.0025, stop=0.0025, num=nbr_points_V)  # gate potential
 
@@ -36,4 +37,5 @@ plt.ylabel('$V_D$ (mV)', fontsize=12)
 plt.xlabel('$V_g$ (V)', fontsize=12)
 plt.xticks(fontsize=12)
 plt.yticks(fontsize=12)
+
 plt.show()
