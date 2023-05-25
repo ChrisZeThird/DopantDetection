@@ -7,7 +7,7 @@ from utils.fermi import fermi
 
 
 class SET:
-    def __init__(self, C1: float, C2: float, Vd: ndarray, Vs: float = 0.0, Vg: ndarray = 0, Cg: float = 0, Q0: float = 0.0, RL: float = 1.6e6, RR: float = 1.6e6, T: float = 0.01, alpha: float = 0.0):
+    def __init__(self, C1: float, C2: float, Vd: ndarray, Vs: float = 0.0, Vg: ndarray = 0, Cg: float = 0, Q0: float = 0.0, RL: float = 1.6e6, RR: float = 1.6e6, T: float = 0.1, alpha: float = 0.0):
         """
         Initialization of the SET parameter
         :param C1: Capacitance of first junction (F)
@@ -52,31 +52,33 @@ class SET:
 
         # Background charge
         self.Q0 = Q0
-        self.Qext = self.Q0 + self.Cg * (self.Vg - self.alpha * self.V)
+        # self.Qext = self.Q0 + self.Cg * (self.Vg - self.alpha * self.V)
 
         # Charging energy
         self.Ec = e ** 2 / self.C_total
         # Chemical potential
-        self.muL = -e * self.Vs  # left barrier (source)
+        self.muR = -e * self.Vs  # right barrier (source)
+        self.muL = -e * self.Vd  # left barrier (drain)
 
-        #
-
-    def state_energy(self, N):
+    def state_energy(self, N, Vd, Vg):
         """
         Calculate energy of state N
         :param N: Index of the state
+        :param Vd: Fixed value of Vd
+        :param Vg: Fixed value of Vg
         :return:
         """
-        return (-e * (N - self.Q0 - 0.5) + self.C1 * self.Vs + self.C2 * self.Vd + self.Cg * self.Vg) ** 2 / (2 * e * self.C_total)
+        return (-e * (N - self.Q0 - 0.5) + self.C1 * self.Vs + self.C2 * Vd + self.Cg * Vg) ** 2 / (2 * e * self.C_total)
 
-    def rate(self, energy_diff, distribution: callable):
+    def rate(self, energy_diff, mu, distribution: callable):
         """
         Calculate rate between two states
         :param energy_diff: Energy difference between states
+        :param mu: chemical potential
         :param distribution: The distribution function, either fermi or 1 - fermi
         :return:
         """
-        return self.RL * distribution((energy_diff - self.muL) * self.beta) + self.RR * distribution((energy_diff - self.muL) * self.beta)
+        return self.RL * distribution((energy_diff - mu) * self.beta) + self.RR * distribution((energy_diff - mu) * self.beta)
 
     def current(self, states_number: int = 5) -> ndarray:
         """
@@ -87,46 +89,49 @@ class SET:
         if states_number < 1:
             raise ValueError('Number of states cannot be smaller than 1.')
 
+        Vd_2d, Vg_2d = np.meshgrid(self.Vd, self.Vg)
         # Initialise current matrix
         current_matrix = np.full((len(self.Vg), len(self.Vd)), e)
 
-        # Calculate for N=0 and N=1 the energies and the rates
-        state_energy_0 = self.state_energy(0)
-        state_energy_1 = self.state_energy(1)
-        energy_diff_10 = state_energy_1 - state_energy_0
-        rate_10 = self.rate(energy_diff_10, fermi)
-        rate_01 = self.rate(energy_diff_10, lambda E: 1 - fermi(E))
-
-        energy_list = [state_energy_0, state_energy_1]
-        energy_diff_list = [energy_diff_10]
-        rates_list = [(rate_10, rate_01)]  # initialise list to store tuples of rates, e.g (G10, G01)
-
         # Matrices from equation C = AP
-        A = np.zeros((states_number, states_number))  # matrix A from the master equation of
-        A[states_number, :] = 1  # normalize all probabilities to 1
+        A = np.zeros((states_number + 1, states_number + 1))  # matrix A from the master equation of
+        A[states_number, :] = 1  # normalize all probabilities to 1 on last row
 
-        A[0, 0] = -rate_10
-        A[0, 1] = rate_01
-
-        C = np.zeros((states_number, 1))  # vector of solutions to rate equations and normalisation
+        C = np.zeros((states_number + 1, 1))  # vector of solutions to rate equations and normalisation
         C[states_number, 0] = 1
 
-        for n in range(2, states_number + 1):  # no reason to not include the state N since we start from 0 and go to N, not N-1
-            state_energy = self.state_energy(n)
-            energy_diff = state_energy - energy_list[n - 1]  # hence why we calculate state 0 outside the loop
-            energy_list.append(state_energy)
-            energy_diff_list.append(energy_diff)
+        # TODO: Try recursive function for this, might be interesting and more efficient (not sure)
+        for i in range(len(self.Vg)):
+            for j in range(len(self.Vd)):
+                Vd = Vd_2d[i, j]
+                Vg = Vg_2d[i, j]
+                muL = - Vd_2d[i, j]
 
-            rate_sup_inf = self.RL * fermi((energy_diff - self.muL) * self.beta) + self.RR * fermi((energy_diff - self.muL) * self.beta)
-            rate_inf_sup = self.RL * (1 - fermi((energy_diff - self.muL) * self.beta)) + self.RR * (1 - fermi((energy_diff - self.muL) * self.beta))
+                # Set energy of states
+                energies = [self.state_energy(n, Vd, Vg) for n in range(0, states_number + 1)]
+                energy_diff_arr = np.diff(np.array(energies))
 
-            rates_list.append((rate_sup_inf, rate_inf_sup))
+                # Set rates between states N and N+1
+                rates_list = [(self.rate(energy_diff, muL, fermi), self.rate(energy_diff, muL, lambda E: 1 - fermi(E))) for energy_diff in energy_diff_arr]
 
-            A[n - 1, n - 2] = - rates_list[n - 1][0]
-            A[n - 1, n - 1] = - rates_list[n - 1][1] - rate_sup_inf
-            A[n - 1, n + 2] = rate_inf_sup
+                # Define the elements of matrix A of master equation
+                A[0, 0] = - rates_list[0][0]  # into and out of N=0 state
+                A[0, 1] = rates_list[0][1]
+                A[states_number, :] = 1  # normalise all probabilities to 1
+                for n in range(1, states_number):
+                    A[n, n - 1] = rates_list[n - 1][0]
+                    A[n, n] = - rates_list[n - 1][1] - rates_list[n][0]
+                    A[n, n + 1] = rates_list[n][1]
 
-        probability_vector = np.linalg.solve(A, C)
+                # Solve the matrix equation to get probability vector
+                probability_vector = np.linalg.solve(A, C)
+
+                for n in range(len(energy_diff_arr)):
+                    on = probability_vector[n] * self.RR * fermi((energy_diff_arr[n] - self.muR) * self.beta)
+                    off = probability_vector[n] * self.RR * (1 - fermi((energy_diff_arr[n] - self.muR) * self.beta))
+
+                    current_matrix[i, j] += on
+                    current_matrix[i, j] -= off
 
         return current_matrix
 
