@@ -56,15 +56,14 @@ class SET:
 
         # Charging energy
         self.Ec = e ** 2 / self.C_total
-        # Chemical potential
-        self.muL = -e * self.Vs  # left barrier (source)
-
-        #
+        # Chemical potentials
+        self.muR = -e * self.Vs  # chemical pot of right lead (source)
+        self.muL = -e * self.Vd  # chemical potential of left lead (drain)
 
     def state_energy(self, N):
         """
         Calculate energy of state N
-        :param N: Index of the state
+        :param N: Index of the state, can be int or array
         :return:
         """
         return (-e * (N - self.Q0 - 0.5) + self.C1 * self.Vs + self.C2 * self.Vd + self.Cg * self.Vg) ** 2 / (2 * e * self.C_total)
@@ -84,69 +83,25 @@ class SET:
         :param states_number: Number of states to consider (N=5 by default)
         :return: Free energy, as a list of numpy array from E0 to E5 (or E_N for N set by states_number)
         """
-        if states_number < 1:
-            raise ValueError('Number of states cannot be smaller than 1.')
+        # Calculate energies of states
+        energies = self.state_energy(np.arange(states_number))
 
-        # Initialise current matrix
-        current_matrix = np.full((len(self.Vg), len(self.Vd)), e)
+        # Calculate rate matrices
+        G_up = self.RL * fermi((energies[:-1] - energies[1:] - self.muR) * self.beta) + self.RR * fermi((energies[:-1] - energies[1:] - self.muR) * self.beta)
+        G_down = self.RL * (1 - fermi((energies[:-1] - energies[1:] - self.muL) * self.beta)) + self.RR * (
+                    1 - fermi((energies[:-1] - energies[1:] - self.muR) * self.beta))
 
-        # Calculate for N=0 and N=1 the energies and the rates
-        state_energy_0 = self.state_energy(0)
-        state_energy_1 = self.state_energy(1)
-        energy_diff_10 = state_energy_1 - state_energy_0
-        rate_10 = self.rate(energy_diff_10, fermi)
-        rate_01 = self.rate(energy_diff_10, lambda E: 1 - fermi(E))
+        # Construct transition matrices
+        G = np.diag(G_up, k=1) + np.diag(G_down, k=-1)
 
-        energy_list = [state_energy_0, state_energy_1]
-        energy_diff_list = [energy_diff_10]
-        rates_list = [(rate_10, rate_01)]  # initialise list to store tuples of rates, e.g (G10, G01)
+        # Set up normalization equation
+        G[-1] = 1.0
+        # Solve the matrix equation to get probability vector
+        P = np.linalg.solve(G, np.zeros(self.nstates))
 
-        # Matrices from equation C = AP
-        A = np.zeros((states_number, states_number))  # matrix A from the master equation of
-        A[states_number, :] = 1  # normalize all probabilities to 1
-
-        A[0, 0] = -rate_10
-        A[0, 1] = rate_01
-
-        C = np.zeros((states_number, 1))  # vector of solutions to rate equations and normalisation
-        C[states_number, 0] = 1
-
-        for n in range(2, states_number + 1):  # no reason to not include the state N since we start from 0 and go to N, not N-1
-            state_energy = self.state_energy(n)
-            energy_diff = state_energy - energy_list[n - 1]  # hence why we calculate state 0 outside the loop
-            energy_list.append(state_energy)
-            energy_diff_list.append(energy_diff)
-
-            rate_sup_inf = self.RL * fermi((energy_diff - self.muL) * self.beta) + self.RR * fermi((energy_diff - self.muL) * self.beta)
-            rate_inf_sup = self.RL * (1 - fermi((energy_diff - self.muL) * self.beta)) + self.RR * (1 - fermi((energy_diff - self.muL) * self.beta))
-
-            rates_list.append((rate_sup_inf, rate_inf_sup))
-
-            A[n - 1, n - 2] = - rates_list[n - 1][0]
-            A[n - 1, n - 1] = - rates_list[n - 1][1] - rate_sup_inf
-            A[n - 1, n + 2] = rate_inf_sup
-
-        probability_vector = np.linalg.solve(A, C)
+        # Calculate the source current by looking at transfer across right barrier
+        on = P[:-1] * self.RR * fermi((energies[:-1] - energies[1:] - self.muR) * self.beta)
+        off = P[1:] * self.RR * (1 - fermi((energies[:-1] - energies[1:] - self.muR) * self.beta))
+        current_matrix = e * (np.sum(on) - np.sum(off))
 
         return current_matrix
-
-    def energy_diff(self, N1: float, N2: float) -> Tuple:
-        """
-        Calculate the energy difference when the number of electrons fluctuates between N1±1 and N2±1
-        :param N1: Number of electron at junction 1
-        :param N2: Number of electron at junction 2
-        :return: Energy difference for each of the 4 cases (N1 + 1 | N1 - 1 | N2 + 1 | N2 - 1)
-        """
-        N = N1 - N2
-        V, Vg = np.meshgrid(self.V, self.Vg)
-
-        delta_free_energy_plus_N1 = e / self.C_total * (
-                    e / 2 + (N * e - self.Cg * Vg - self.Qext + self.C2 * V))
-        delta_free_energy_minus_N1 = e / self.C_total * (
-                    e / 2 - (N * e - self.Cg * Vg - self.Qext + self.C2 * V))
-        delta_free_energy_plus_N2 = e / self.C_total * (
-                    e / 2 + (-N * e + self.Cg * Vg + self.Qext + (self.C1 + self.Cg) * V))
-        delta_free_energy_minus_N2 = e / self.C_total * (
-                    e / 2 - (-N * e + self.Cg * Vg + self.Qext + (self.C1 + self.Cg) * V))
-
-        return delta_free_energy_plus_N1, delta_free_energy_minus_N1, delta_free_energy_plus_N2, delta_free_energy_minus_N2
