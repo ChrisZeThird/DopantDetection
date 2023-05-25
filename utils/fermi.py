@@ -1,5 +1,6 @@
 from numpy import exp
 from typing import Any
+from scipy.special import expit
 
 from constants import kB
 
@@ -10,7 +11,7 @@ def fermi(x: Any) -> Any:
     :param x: Any type
     :return: Fermi dirac statistic
     """
-    return 1 / (exp(x) + 1)
+    return expit(-x)
 
 
 def fermi_autocorrelation(E: Any, T: float = 0.0) -> Any:
