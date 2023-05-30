@@ -18,7 +18,9 @@ C1 = 1.98e-17  # capacitance source (F)
 C2 = 4.80e-17  # capacitance drain (F)
 Cg = 5.09e-18  # gate capacitance (F)
 
-circuit = SET(C1=C1, C2=C2, Vd=V, Vg=Vg, Cg=Cg, T=0.3)
+# E_QM = np.array([0, 0.4, 0.7, 0.8]) * 1e-3
+
+circuit = SET(C1=C1, C2=C2, Vd=V, Vg=Vg, Cg=Cg, T=0.01)
 I = circuit.current(5)
 
 plt.rc('text', usetex=False)

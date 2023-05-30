@@ -9,7 +9,8 @@ from utils.fermi import fermi
 class SET:
     def __init__(self, C1: float, C2: float, Vd: ndarray, Vs: float = 0.0, Vg: ndarray = 0, Cg: float = 0, Q0: float = 0.0, RL: float = 1.6e6, RR: float = 1.6e6, T: float = 0.01, alpha: float = 0.0):
         """
-        Initialization of the SET parameter
+        Initialization of the SET parameter. Definition is confusing here as C1 and C1 are source and rain capacitance,
+        and not of dot 1 and dot 2
         :param C1: Capacitance of first junction (F)
         :param C2: Capacitance of second junction (F)
         :param Vd: Drain potential (V)
@@ -22,6 +23,7 @@ class SET:
         :param T: Temperature (K) of the system, 0.01 temperature by default to avoid division by zero
         :param alpha: Lever parameter, factor depending on the circuit, 0 by default
         """
+        # TODO Adapt for double quantum dot
         # Circuit factor
         self.alpha = alpha
 
@@ -96,7 +98,7 @@ class SET:
         # Initialise current matrix
         current_matrix = np.zeros((len(self.Vg), len(self.Vd)))
         # Matrices from equation C = AP
-        A = np.zeros((states_number + 1, states_number + 1))  # matrix A from the master equation of
+        A = np.zeros((states_number + 1, states_number + 1))  # matrix A from the master equation
         A[states_number, :] = 1  # normalize all probabilities to 1 on last row
 
         C = np.zeros((states_number + 1, 1))  # vector of solutions to rate equations and normalisation
