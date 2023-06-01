@@ -3,6 +3,8 @@ from numpy import ndarray
 import numpy as np
 from typing import Any
 
+import warnings
+
 from constants import e, kB
 from utils.fermi import fermi
 
@@ -11,12 +13,13 @@ from utils.fermi import fermi
 #  going to be allowed. Even though you’re just adding one electron to the 2nd dot you’re removing 2 from the first?
 
 
-class SET:
+class DoubleDot:
     def __init__(self, Vg1: ndarray = 0, Cg1: float = 0, Vg2: ndarray = 0, Cg2: float = 0, CL: float = 0, RL: float = 0, CR: float = 0, RR: float = 0, Cm: float = 0, Rm: float = 0, T: float = 0.01):
         """
         Initialization of the SET parameter. Definition is confusing here as C1 and C1 are source and rain capacitance,
         and not of dot 1 and dot 2.
-        We consider the linear transport regime, i.e., bias voltage V=0 in the first place.
+        Grand canonical ensemble approach is used in order to obtain the distribution of electrons in the double dots. The
+        code is based on the work of Pierre-Antoine Mouny at the 3iT, at the University of Sherbrooke.
         :param Vg1: Gate control potential on dot 1 (V), by default 0 meaning no Cg1,Vg1 will be taken into account
         :param Cg1: Control gate capacitance on dot 1 (F) ------------------------//-------------------------------
         :param Vg2: Gate control potential on dot 2 (V), by default 0 meaning no Cg2,Vg2 will be taken into account
@@ -49,30 +52,17 @@ class SET:
 
         # Dot 1 capacitance
         self.C1 = self.CL + self.Cg1 + self.Cm
-
         # Dot 2 capacitance
         self.C2 = self.CR + self.Cg2 + self.Cm
-
         # Temperature
         self.T = T
 
-        # Electrostatic coupling
-        self.EC1 = self.charging_energy_dot(self.C1)
-        self.EC2 = self.charging_energy_dot(self.C2)
-        self.ECm = self.charging_energy_dot(self.Cm)
+        # Electrostatic coupling (charging energy)
+        self.EC1 = (e ** 2) * (self.C2 / (self.C1 * self.C2 - (self.Cm ** 2)))
+        self.EC2 = (e ** 2) * (self.C1 / (self.C1 * self.C2 - (self.Cm ** 2)))
+        self.ECm = (e ** 2) * (self.Cm / (self.C1 * self.C2 - (self.Cm ** 2)))
 
-    def charging_energy_dot(self, capacitance):
-        """
-        Calculates the charging energy of the individual dot considered with capacitance `capacitance`
-        :param capacitance:
-        :return:
-        """
-        if capacitance != self.Cm:
-            return (e ** 2) / capacitance * (1 / (1 - (self.Cm ** 2) / (self.C1 * self.C2)))
-        else:
-            return (e ** 2) / capacitance * (1 / ((self.C1 * self.C2) / (self.Cm ** 2) / - 1))
-
-    def electrostatic_energy(self, N1, N2):
+    def electrostatic_energy(self, N1: int, N2: int):
         """
         Double dot electrostatic energy. Based on equation (1) in 'Electron transport through double quantum dots', by
         W. G van der Wiel, 2003
@@ -80,42 +70,30 @@ class SET:
         :param N2: Number of electron on dot 2
         :return:
         """
-        f = 1 / (- e) * (self.Cg1 * self.Vg1 * (N1 * self.EC1 + N2 * self.ECm) + self.Cg2 * self.Vg2 * (N1 * self.ECm + N2 * self.EC2)) + 1 / (e ** 2) * (
-                0.5 * (self.Cg1 ** 2) * (self.Vg1 ** 2) * self.EC1 + 0.5 * (self.Cg2 ** 2) * (self.Vg2 ** 2) * self.EC2 + self.Cg1 * self.Vg1 * self.Cg2 * self.Vg2 * self.ECm)
+        f = -1 / e * (self.Cg1 * self.Vg1 * (N1 * self.EC1 + N2 * self.ECm) + self.Cg2 * self.Vg2 * (N1 * self.ECm + N2 * self.EC2))\
+            + 1 / (e ** 2) * (0.5 * (self.Cg1 ** 2) * (self.Vg1 ** 2) * self.EC1 + 0.5 * (self.Cg2 ** 2) * (self.Vg2 ** 2) * self.EC2
+                              + self.Cg1 * self.Vg1 * self.Cg2 * self.Vg2 * self.ECm)
 
         U = 0.5 * (N1 ** 2) * self.EC1 + 0.5 * (N2 ** 2) * self.EC2 + 0.5 * (N1 * N2) * self.ECm + f
         return U
 
-    def rate(self, energy_diff, mu, distribution: callable):
+    def electron_statistic(self, N1, N2):
         """
-        Calculate rate between two states
-        :param energy_diff: Energy difference between states
-        :param mu: Chemical potential
-        :param distribution: The distribution function, either fermi or 1 - fermi
-        :return: Rate between the two states
-        """
-        return self.RL * distribution((energy_diff - mu) * self.beta_ev) + self.RR * distribution(
-            (energy_diff - mu) * self.beta_ev)
-
-    def current(self, states_number_dot1: int = 5, states_number_dot2: int = 5) -> ndarray:
-        """
-        Calculate the current through the double quantum dot for given number of states for each dot
-        :param states_number_dot1: Number of states to consider for the first dot (N1)
-        :param states_number_dot2: Number of states to consider for the second dot (N2)
-        :return: Current matrix, as a 2D numpy array
+        Calculate the statistical distribution of electrons in the double quantum dots, considered as a Grand Canonical
+        Ensemble.
+        :param N1: Number of electrons in dot 1
+        :param N2: Number of electrons in dot 2
+        :return: The weighted average of electrons number in the DQD
         """
 
-        if states_number_dot1 < 1 or states_number_dot2 < 1:
-            raise ValueError('Number of states cannot be smaller than 1.')
+        partition_func = 0
+        avg_nbr = 0
+        with warnings.catch_warnings():
+            warnings.filterwarnings('ignore')
+            for i in range(0, N2 + 1):
+                for j in range(0, N1 + 1):
+                    elec_energy = self.electrostatic_energy(j, i)
+                    partition_func = partition_func + np.exp(-elec_energy / (kB * self.T))
+                    avg_nbr = avg_nbr + (j - i) * np.exp(-elec_energy / (kB * self.T))
 
-        Vg1_2d, Vg2_2d = np.meshgrid(self.Vg1, self.Vg2)
-
-        # Initialise current matrix
-        current_matrix = np.zeros((len(self.Vg1), len(self.Vg2)))
-
-        # Matrices from equation C = AP
-        A = np.zeros((states_number_dot1 + 1, states_number_dot2 + 1))  # matrix A from the master equation of
-        A[states_number_dot1, :] = 1  # normalize all probabilities to 1 on last row
-
-
-
+            return avg_nbr / partition_func
